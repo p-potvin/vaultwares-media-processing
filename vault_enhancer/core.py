@@ -45,7 +45,7 @@ def transcribe_video(
     max_translate_chars = 350000,
     max_translate_calls = 500,
     overwrite = False,
-    source_language = None,
+    source_language = "en",
     engine = "parakeet",
     delay_ms = 0,
     max_duration = 7200,
@@ -70,6 +70,7 @@ def transcribe_video(
     all_segments = list()
     original_texts = []
     outputs_to_generate = {}
+    output_paths = []
     
     # Tuned VAD parameters for more stable speech segments.
     # min_silence_duration_ms: higher value (1000ms+) prevents cutting during natural phrasing pauses.
@@ -83,11 +84,16 @@ def transcribe_video(
     # --- Step 0: Warm-load Models ---
     # Establishing the GPU context early prevents late-initialization CUDA errors 
     # and eliminates weight-swap latency between Demucs and ASR.
+    print(f"--- Step 0: Loading AI Models into VRAM ---")
+    if progress_callback is not None:
+        progress_callback("Step 0: Loading ML models into VRAM (this may take a minute)...", 2)
+        
+    start_load = time.time()
     if engine == "parakeet":
         model = get_parakeet_model()
     else:
         from faster_whisper import WhisperModel
-        model = WhisperModel("large-v3", device="cuda", compute_type="float16")
+        model = WhisperModel("large-v3", device="cuda", compute_type="float16") 
 
     # Ensure context is fully initialized before starting subprocesses
     try:
@@ -96,9 +102,10 @@ def transcribe_video(
             torch.cuda.synchronize()
     except ImportError:
         pass
-
-    print(f"--- Step 1: Pre-processing (Fix Audio & Re-encode) ---")
-    if progress_callback:
+        
+    print(f"Models loaded successfully in {time.time() - start_load:.2f}s.")
+    
+    if progress_callback is not None:
         progress_callback("Initiating Media Pipeline...", 5)
 
     if skip_vocal_isolation:
@@ -118,17 +125,18 @@ def transcribe_video(
 
     print(f"--- Step 2: Transcribing Video ({engine.capitalize()}) ---")
     # Extract WAV for reliable ASR loading (bypasses torchaudio FFmpeg extension bugs)
-    if progress_callback:
+    if progress_callback is not None:
         progress_callback("Extracting audio for ASR...", 48)
+
     asr_wav_file = media.extract_wav_for_asr(transcription_file)
     print(f"Source file for transcription (WAV): {asr_wav_file}")
     
-    if progress_callback:
+    if progress_callback is not None:
         progress_callback("Step 2: Transcribing Audio...", 50)
         
     all_segments = model.transcribe_file(
         asr_wav_file,
-        language=source_language or "en",
+        language=source_language
     )
     
     # Cleanup ASR temp file
@@ -192,8 +200,7 @@ def transcribe_video(
         if not outputs_to_generate:
             print("No new files to generate.")
             return []
-
-        output_paths = []
+        
         for path, texts_to_write in outputs_to_generate.items():
             utils.write_srt(path, all_segments, texts_to_write)
             output_paths.append(path)

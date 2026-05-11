@@ -6,10 +6,10 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QLineEdit, QPushButton, QCheckBox, QComboBox,
     QProgressBar, QTextEdit, QFileDialog, QFrame, QSpinBox, QDoubleSpinBox,
-    QSizePolicy, QScrollArea, QSpacerItem
+    QSizePolicy, QScrollArea, QSpacerItem, QSplitter
 )
 from PySide6.QtCore import Qt, QThread, Signal, QSize
-from PySide6.QtGui import QPixmap, QIcon, QFont, QColor, QPalette,  QKeySequence, QShortcut
+from PySide6.QtGui import QPixmap, QIcon, QFont, QColor, QPalette,  QKeySequence, QShortcut, QTextCursor
 
 import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "vault-themes"))
@@ -121,8 +121,18 @@ class LogStream:
         if text.strip():
             import re
             clean = re.sub(r'\x1b\[[0-9;]*[mK]', '', text)
-            if clean.strip():
-                self.log_fn(clean.strip())
+            clean = clean.strip()
+            if not clean:
+                return
+            
+            # Suppress NeMo, PyTorch, and OneLogger warnings
+            lower_clean = clean.lower()
+            if "[nemo w" in lower_clean or "megatron_init" in lower_clean or "nv_one_logger" in lower_clean:
+                return
+            if "warning:nv_one_logger" in lower_clean or "[nemo i" in lower_clean:
+                return
+
+            self.log_fn(clean)
 
     def flush(self):
         pass
@@ -169,11 +179,14 @@ class VaultWindow(QMainWindow):
         root_layout.addWidget(self._make_separator())
 
         # ── Main split (config | monitor) ────────────────────────────────
-        split = QHBoxLayout()
-        split.setSpacing(12)
-        split.addWidget(self._build_config_panel(), stretch=4)
-        split.addWidget(self._build_monitor_panel(), stretch=6)
-        root_layout.addLayout(split, stretch=1)
+        self.split = QSplitter(Qt.Horizontal)
+        self.split.addWidget(self._build_config_panel())
+        self.split.addWidget(self._build_monitor_panel())
+        self.split.setStretchFactor(0, 4)
+        self.split.setStretchFactor(1, 6)
+        
+        # When layout resizes, we might need to fold
+        root_layout.addWidget(self.split, stretch=1)
 
         # ── Footer ────────────────────────────────────────────────────────
         root_layout.addWidget(self._make_separator())
@@ -189,7 +202,7 @@ class VaultWindow(QMainWindow):
 
         # Logo
         logo_label = QLabel()
-        logo_path = "vault-themes/Brand/minimal-logos/vaultwares-minimal-gold-filled.png"
+        logo_path = "vault-themes/assets/logos/vaultwares-minimal-gold-filled.png"
         logo_pix = QPixmap(logo_path)
         if not logo_pix.isNull():
             logo_label.setPixmap(logo_pix.scaled(28, 28, Qt.KeepAspectRatio, Qt.SmoothTransformation))
@@ -314,9 +327,10 @@ class VaultWindow(QMainWindow):
         v_dur = QVBoxLayout()
         v_dur.addWidget(self._field_label("Max Duration"))
         self.max_duration = QSpinBox()
-        self.max_duration.setRange(0, 86400)
-        self.max_duration.setValue(7200)
-        self.max_duration.setSuffix(" s")
+        self.max_duration.setRange(0, 1440)
+        self.max_duration.setValue(0)
+        self.max_duration.setSpecialValueText("None")
+        self.max_duration.setSuffix(" min")
         v_dur.addWidget(self.max_duration)
         limits_row.addLayout(v_dur)
 
@@ -375,7 +389,7 @@ class VaultWindow(QMainWindow):
 
         # Header row
         monitor_row = QHBoxLayout()
-        title = QLabel("VAULT ACTIVITY MONITOR")
+        title = QLabel("ACTIVITY MONITOR")
         title.setObjectName("SectionTitleMonitor")
         monitor_row.addWidget(title)
         monitor_row.addStretch()
@@ -383,6 +397,14 @@ class VaultWindow(QMainWindow):
         self.status_badge = QLabel("IDLE")
         self.status_badge.setObjectName("TagBadge")
         monitor_row.addWidget(self.status_badge)
+        
+        self.toggle_monitor_btn = QPushButton()
+        self.toggle_monitor_btn.setText("Hide")
+        self.toggle_monitor_btn.setFixedSize(50, 24)
+        self.toggle_monitor_btn.setStyleSheet("font-size: 10px; padding: 2px 6px; border-radius: 4px;")
+        self.toggle_monitor_btn.clicked.connect(self.toggle_monitor)
+        monitor_row.addWidget(self.toggle_monitor_btn)
+        
         layout.addLayout(monitor_row)
 
         # Log area
@@ -409,6 +431,14 @@ class VaultWindow(QMainWindow):
         layout.addLayout(progress_row)
 
         return panel
+
+    def toggle_monitor(self):
+        if self.log_area.isVisible():
+            self.log_area.hide()
+            self.toggle_monitor_btn.setText("Show")
+        else:
+            self.log_area.show()
+            self.toggle_monitor_btn.setText("Hide")
 
     # ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -524,7 +554,7 @@ class VaultWindow(QMainWindow):
         if path:
             self.input_edit.setText(path)
 
-    def log(self, message: str):
+    def log(self, message: str, is_progress: bool = False):
         t = self.current_theme
         ts = time.strftime("%H:%M:%S")
 
@@ -542,13 +572,37 @@ class VaultWindow(QMainWindow):
 
         ts_html = f"<span style='color:{t.muted}'>[{ts}]</span>"
         msg_html = f"<span style='color:{color}'>{message}</span>"
-        self.log_area.append(f"{ts_html} {msg_html}")
+        full_html = f"{ts_html} {msg_html}"
+
+        if is_progress:
+            if getattr(self, '_last_was_progress', False):
+                # Overwrite the last line for progress updates
+                cursor = self.log_area.textCursor()
+                cursor.movePosition(QTextCursor.End)
+                cursor.select(QTextCursor.BlockUnderCursor)
+                cursor.removeSelectedText()
+                self.log_area.setTextCursor(cursor)
+                self.log_area.insertHtml(full_html)
+            else:
+                self.log_area.append(full_html)
+            self._last_was_progress = True
+        else:
+            self.log_area.append(full_html)
+            self._last_was_progress = False
+
+        # Ensure scroll stays at bottom
+        cursor = self.log_area.textCursor()
+        cursor.movePosition(QTextCursor.End)
+        self.log_area.setTextCursor(cursor)
 
     def start_processing(self):
         input_path = self.input_edit.text().strip()
         if not input_path:
             self.log(f"<span style='color:{self.current_theme.error}'>Error: No input path specified.</span>")
             return
+
+        duration_val = self.max_duration.value()
+        max_dur = duration_val * 60 if duration_val > 0 else None
 
         params = {
             "input_file": input_path,
@@ -558,7 +612,7 @@ class VaultWindow(QMainWindow):
             "translate_mode": self.mode_combo.currentText(),
             "skip_vocal_isolation": not self.vocal_check.isChecked(),
             "skip_original": self.skip_orig_check.isChecked(),
-            "max_duration": self.max_duration.value(),
+            "max_duration": max_dur,
             "delay_ms": self.delay_spin.value(),
             "source_language": self.src_lang_edit.text().strip() or None,
             "overwrite": self.overwrite_check.isChecked(),
@@ -585,7 +639,7 @@ class VaultWindow(QMainWindow):
 
     def _on_progress_text(self, text: str):
         self.progress_label.setText(text[:40] + "…" if len(text) > 40 else text)
-        self.log(text)
+        self.log(text, is_progress=True)
 
     def _on_progress_pct(self, pct: int):
         self.progress_bar.setValue(pct)

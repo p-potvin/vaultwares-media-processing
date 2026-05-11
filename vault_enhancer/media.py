@@ -40,13 +40,20 @@ def extract_wav_for_asr(input_file):
     if os.path.exists(wav_path):
         os.remove(wav_path)
         
-    subprocess.run([
-        "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
-        "-i", video_abs,
-        "-vn", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1",
-        wav_path
-    ], check=True)
+    try:
+        subprocess.run([
+            "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+            "-i", video_abs,
+            "-vn", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1",
+            wav_path
+        ], check=True, capture_output=True, text=True)
+    except subprocess.CalledProcessError as e:
+        # e.returncode can sometimes be bizarre unsigned ints on Windows
+        raise RuntimeError(f"Failed to extract audio using FFmpeg (Code: {e.returncode}). Possible reasons: No audio track exists, unreadable file format, or Corrupt media.\nFFmpeg Stderr: {e.stderr.strip()}")
     
+    if not os.path.exists(wav_path) or os.path.getsize(wav_path) < 100:
+        raise RuntimeError(f"Audio extraction created an empty or missing output. Does the video have an audio track?")
+        
     return wav_path
 
 def fix_audio_and_reencode(video_path, output_path=None, delay_ms=0, bg_volume="-20dB", cq=26, fps=30, max_duration=None, progress_callback=None):
@@ -115,9 +122,9 @@ def fix_audio_and_reencode(video_path, output_path=None, delay_ms=0, bg_volume="
                     except: pass
                 
                 # 2. Update Console/GUI Monitor (Selective to avoid signal flood)
-                # We only print lines that look like status updates
-                if any(x in line for x in ["frame=", "fps=", "size=", "time=", "bitrate=", "it/s", "s/it"]):
-                    print(line, end='', flush=True)
+                # We do NOT print tqdm/ffmpeg line-by-line spam here anymore,
+                # as that floods the UI logs. Only update via progress_callback.
+                pass
 
         t = threading.Thread(target=reader, daemon=True)
         t.start()
