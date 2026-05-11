@@ -24,7 +24,6 @@ from vault_enhancer import utils
 from vault_enhancer import translation
 from vault_enhancer import media
 
-_WHISPER_MODEL = None
 _PARAKEET_MODEL = None
 
 def get_parakeet_model():
@@ -46,7 +45,6 @@ def transcribe_video(
     max_translate_calls = 500,
     overwrite = False,
     source_language = "en",
-    engine = "parakeet",
     delay_ms = 0,
     max_duration = 7200,
     progress_callback = None
@@ -89,11 +87,7 @@ def transcribe_video(
         progress_callback("Step 0: Loading ML models into VRAM (this may take a minute)...", 2)
         
     start_load = time.time()
-    if engine == "parakeet":
-        model = get_parakeet_model()
-    else:
-        from faster_whisper import WhisperModel
-        model = WhisperModel("large-v3", device="cuda", compute_type="float16") 
+    model = get_parakeet_model()
 
     # Ensure context is fully initialized before starting subprocesses
     try:
@@ -123,7 +117,7 @@ def transcribe_video(
             print(f"Warning: Audio fix failed: {e}. Falling back to original video.")
             transcription_file = input_file
 
-    print(f"--- Step 2: Transcribing Video ({engine.capitalize()}) ---")
+    print(f"--- Step 2: Transcribing Video (Parakeet) ---")
     # Extract WAV for reliable ASR loading (bypasses torchaudio FFmpeg extension bugs)
     if progress_callback is not None:
         progress_callback("Extracting audio for ASR...", 48)

@@ -279,8 +279,9 @@ class VaultWindow(QMainWindow):
         v_engine = QVBoxLayout()
         v_engine.addWidget(self._field_label("ASR Engine"))
         self.engine_combo = QComboBox()
-        self.engine_combo.addItems(["parakeet", "whisper"])
+        self.engine_combo.addItems(["parakeet"])
         self.engine_combo.setCurrentText("parakeet")
+        self.engine_combo.setEnabled(False)
         v_engine.addWidget(self.engine_combo)
         core_row.addLayout(v_engine)
 
@@ -433,11 +434,22 @@ class VaultWindow(QMainWindow):
         return panel
 
     def toggle_monitor(self):
-        if self.log_area.isVisible():
+        # Hide/show the monitor panel, and change splitter orientation
+        if self.split.orientation() == Qt.Horizontal:
+            # Hide monitor: switch to vertical, only show progress bar under config
+            self.split.setOrientation(Qt.Vertical)
+            self.monitor_panel.setMaximumHeight(120)
             self.log_area.hide()
+            self.progress_label.show()
+            self.progress_bar.show()
             self.toggle_monitor_btn.setText("Show")
         else:
+            # Show monitor: restore horizontal, show all
+            self.split.setOrientation(Qt.Horizontal)
+            self.monitor_panel.setMaximumHeight(16777215)
             self.log_area.show()
+            self.progress_label.show()
+            self.progress_bar.show()
             self.toggle_monitor_btn.setText("Hide")
 
     # ── Helpers ──────────────────────────────────────────────────────────────
@@ -445,7 +457,8 @@ class VaultWindow(QMainWindow):
         # --- Accessibility & Tooltips ---
         self.theme_combo.setToolTip("Select UI Theme")
         self.input_edit.setToolTip("Path to the video/audio file to process")
-        browse_btn.setToolTip("Browse for media file (Ctrl+O)")
+        browse_file_btn.setToolTip("Browse for media file (Ctrl+O)")
+        browse_folder_btn.setToolTip("Browse for folder")
         self.lang_edit.setToolTip("Comma-separated target languages for translation (e.g., en, fr, es)")
         self.engine_combo.setToolTip("Transcription engine to use")
         self.api_combo.setToolTip("Translation backend service")
