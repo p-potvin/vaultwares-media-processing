@@ -16,6 +16,7 @@ Part of the VaultWares Ecosystem • [docs.vaultwares.com](https://docs.vaultwar
 - **Multi-Language:** Translate into multiple target languages simultaneously.
 - **Batch Processing:** Recursive folder scanning with extension filtering.
 - **VaultWares Native:** Built-in compliance with VaultWares Brand & Privacy guidelines.
+- **Offline Translation:** Integrates `argostranslate` for completely local, privacy-first translation.
 
 ---
 
@@ -38,7 +39,6 @@ python enhancer.py --input video.mp4 --languages en,fr,es --engine parakeet
 | `--source-language` | `None` | Force a specific source language to prevent hallucinations. |
 | `--skip-original` | `False` | Do not generate the original language SRT file. |
 | `--skip-vocal-isolation` | `False` | Skip Demucs vocal isolation (faster but noisier). |
-| `--translate-api` | `deep-translator` | Backend: `googletrans` or `deep-translator`. |
 | `--translate-mode` | `all` | `all` (translate everything) or `non-target` (detected != target). |
 | `--max-translate-chars` | `1000000` | Skip translation if total chars exceed this limit. |
 | `--max-translate-calls` | `500` | Max translator calls per video. |
@@ -46,6 +46,8 @@ python enhancer.py --input video.mp4 --languages en,fr,es --engine parakeet
 | `--continue-on-error` | `False` | Continue to the next file if one fails in scan mode. |
 | `--overwrite` | `False` | Overwrite existing SRT files. |
 | `--extensions` | `.mp4,.mkv...` | Comma-separated extensions for scan mode. |
+
+Translation always uses the built-in local `argostranslate` backend for offline, privacy-first processing.
 
 ### Graphical User Interface
 
