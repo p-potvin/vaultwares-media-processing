@@ -6,3 +6,7 @@ venv
 __pycache__/
 .pytest_cache/
 gui/node_modules/
+build/
+dist/
+*.log
+*.bak
