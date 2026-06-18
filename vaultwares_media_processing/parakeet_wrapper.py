@@ -1,9 +1,33 @@
 import os
 import logging
 import subprocess
+import shutil
 from typing import List
 
+# Pre-import datasets to resolve the Windows MKL/OpenMP PyTorch/PyArrow import conflict causing silent exit code 1
+try:
+    import datasets
+except Exception:
+    pass
+
+# Patch shutil.rmtree on Windows to ignore PermissionErrors during temp directory cleanup
+# which avoids WinError 32 from NeMo's temporary manifest.json locks.
+original_rmtree = shutil.rmtree
+def patched_rmtree(path, *args, **kwargs):
+    try:
+        return original_rmtree(path, *args, **kwargs)
+    except PermissionError:
+        if "temp" in path.lower() or "tmp" in path.lower():
+            pass
+        else:
+            raise
+shutil.rmtree = patched_rmtree
+
+
 # Silence noisy NeMo / PyTorch / Lightning startup logs
+import warnings
+warnings.filterwarnings("ignore")
+
 os.environ["NEMO_LOGGING_LEVEL"] = "ERROR"
 os.environ["TORCHAUDIO_DEBUG"] = "0"
 os.environ["PYTHONWARNINGS"] = "ignore"
@@ -14,6 +38,13 @@ logging.basicConfig(level=logging.WARNING)
 logging.getLogger("nemo_logging").setLevel(logging.ERROR)
 logging.getLogger("torchaudio").setLevel(logging.ERROR)
 logging.getLogger("torio").setLevel(logging.ERROR)
+logging.getLogger("pytorch_lightning").setLevel(logging.ERROR)
+
+try:
+    from nemo.utils import logging as nemo_logging
+    nemo_logging.setLevel(nemo_logging.ERROR)
+except ImportError:
+    pass
 
 try:
     import torch
@@ -78,12 +109,20 @@ class ParakeetTranscriber:
     DEFAULT_MIN_SEGMENT_S = 0.3   # discard segments shorter than this
 
     def __init__(self, model_name: str = DEFAULT_MODEL, status_callback=None):
+        import time
+        t_import_start = time.perf_counter()
         import torch
         import nemo.collections.asr as nemo_asr
+        t_import_end = time.perf_counter()
+        
+        # Log/Print import latency telemetry
+        import_duration = t_import_end - t_import_start
+        print(f"[ASR Telemetry] Library Import Latency: {import_duration:.4f} seconds")
 
         self.logger = logging.getLogger("vaultwares_media_processing.parakeet")
         self.logger.info(f"Loading Parakeet model: {model_name}")
 
+        t_load_start = time.perf_counter()
         # Use generic ASRModel to support Canary, Parakeet-TDT, etc.
         # --- Optimization: Search for local .nemo file in HF cache to bypass remote checks ---
         if not (model_name.endswith(".nemo") and os.path.exists(model_name)):
@@ -97,41 +136,13 @@ class ParakeetTranscriber:
                 model_name = local_models[0]
                 self.logger.info(f"Found local model in HF cache: {model_name}")
 
-        # --- Optimization: Persistent Extraction Cache ---
-        # NeMo .restore_from extracts the .nemo (tarball) to a temp dir every time.
-        # For a 2.5GB model, this is very slow. We extract it once to a persistent cache.
-        persistent_cache_root = os.path.expanduser("~/.cache/vault-enhancer/models")
-        os.makedirs(persistent_cache_root, exist_ok=True)
-        
-        # Create a unique dir name based on the model path/name
-        import hashlib
-        model_hash = hashlib.md5(model_name.encode()).hexdigest()[:8]
-        extracted_dir = os.path.join(persistent_cache_root, f"parakeet_0.6b_{model_hash}")
-        
+        # --- Optimization: Restore natively from the resolved local .nemo file if present ---
+        # Windows has PermissionErrors when extracting/restoring directly from directories via restore_from.
+        # Restoring directly from the .nemo file is highly optimized and 100% robust on Windows.
         if model_name.endswith(".nemo") and os.path.exists(model_name):
-            # Check if already extracted
-            if not os.path.exists(os.path.join(extracted_dir, "model_config.yaml")):
-                msg = f"Step 0: Extracting .nemo to persistent cache (one-time)..."
-                if status_callback: status_callback(msg)
-                self.logger.info(f"Extracting .nemo to persistent cache (one-time): {extracted_dir}")
-                os.makedirs(extracted_dir, exist_ok=True)
-                import tarfile
-                try:
-                    with tarfile.open(model_name, "r") as tar:
-                        tar.extractall(path=extracted_dir)
-                    self.logger.info("Extraction complete.")
-                except Exception as e:
-                    self.logger.error(f"Failed to extract model: {e}. Falling back to standard load.")
-                    extracted_dir = model_name # Fallback
-            
-            if os.path.exists(os.path.join(extracted_dir, "model_config.yaml")):
-                model_name = extracted_dir
-                self.logger.info(f"Using persistent extracted model: {model_name}")
-
-        if os.path.isdir(model_name) or (model_name.endswith(".nemo") and os.path.exists(model_name)):
             msg = f"Step 0: Restoring model from local path..."
             if status_callback: status_callback(msg)
-            self.logger.info(f"Loading model from: {model_name}")
+            self.logger.info(f"Loading model from local .nemo archive: {model_name}")
             self.model = nemo_asr.models.ASRModel.restore_from(model_name)
         else:
             msg = f"Step 0: Loading model from cache/remote..."
@@ -141,6 +152,11 @@ class ParakeetTranscriber:
         if torch.cuda.is_available():
             self.model = self.model.cuda()
         self.model.eval()
+        t_load_end = time.perf_counter()
+        
+        load_duration = t_load_end - t_load_start
+        print(f"[ASR Telemetry] Model Loading & Device Allocation: {load_duration:.4f} seconds")
+        print(f"[ASR Telemetry] Combined Engine Initialization: {time.perf_counter() - t_import_start:.4f} seconds")
 
         self.logger.info("Parakeet model loaded successfully.")
 
@@ -182,6 +198,9 @@ class ParakeetTranscriber:
         
         # Read the entire audio to chunk it
         data, samplerate = sf.read(audio_path)
+        # Downmix multi-channel audio to mono if necessary
+        if len(data.shape) > 1 and data.shape[1] > 1:
+            data = data.mean(axis=1)
         chunk_duration = 60  # seconds
         chunk_size = chunk_duration * samplerate
         
@@ -247,6 +266,10 @@ class ParakeetTranscriber:
         Transcribe raw audio data (e.g., numpy array) and return voice-pause-segmented results.
         """
         self.logger.info(f"Transcribing audio data (min_silence={min_silence_s}s)")
+        
+        import numpy as np
+        if isinstance(audio_data, np.ndarray) and len(audio_data.shape) > 1 and audio_data.shape[1] > 1:
+            audio_data = audio_data.mean(axis=1)
 
         import torch
         with torch.no_grad():

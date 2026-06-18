@@ -164,6 +164,17 @@ def fix_audio_and_reencode(video_path, output_path=None, delay_ms=0, bg_volume="
     if not os.path.exists(vocals_path):
         raise RuntimeError(f"Demucs failed to produce vocals at {vocals_path}")
 
+    # Remux separated vocals to mono with FFmpeg (instant)
+    try:
+        vocals_mono_path = os.path.join(temp_dir, "htdemucs", "vocals_mono.wav")
+        subprocess.run([
+            "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+            "-i", vocals_path, "-ac", "1", vocals_mono_path
+        ], check=True)
+        shutil.move(vocals_mono_path, vocals_path)
+    except Exception as e:
+        print(f"Warning: Failed to remux vocals to mono using FFmpeg: {e}")
+
     # loudnorm requires buffered look-ahead, starving NVENC of audio frames.
     # dynaudnorm is a true streaming normalizer (zero lookahead), allowing NVENC
     # to encode at full hardware throughput without waiting on the audio graph.
