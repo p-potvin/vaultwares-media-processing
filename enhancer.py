@@ -5,9 +5,6 @@ import os
 import sys
 import time
 
-# VaultWares Agent Knowledge Sync
-# Part of the official VaultWares media pipeline.
-# Can call invoke_vaultwares_team for multi-step translation or quality assurance.
 
 def main():
     # Only import heavy dependencies inside main() to speed up interpreter exit/error paths

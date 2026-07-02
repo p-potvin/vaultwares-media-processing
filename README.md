@@ -5,7 +5,7 @@
 **High-Performance Video Transcription & Multi-Language Translation Tool**  
 Part of the VaultWares Ecosystem • [docs.vaultwares.com](https://docs.vaultwares.com) • [vaultwares.com](https://vaultwares.com)
 
-**Generate high-quality .srt subtitles from audio/video files and translate them into any number of languages using local models. Powers subtitles in vault-player and feeds into vaultwares-pipelines.**
+**Generate high-quality .srt subtitles from audio/video files and translate them into any number of languages using local models. Powers subtitles in vault-player and feeds into vault-explorer.**
 
 ---
 
